@@ -72,6 +72,23 @@ function NodeGraph() {
         svg.dispatchEvent(evt);
     }
 
+    function createConection(from_nid, to_nid) {
+        const from_node = node_lookup[from_nid];
+        const to_node = node_lookup[to_nid];
+        const from_center = getCenter(from_node);
+        const to_center = getCenter(to_node);
+        const { shape: line } = create(svg, "line", {
+            class: "line",
+            "data-src_nid": from_nid,
+            "data-dest_nid": to_nid,
+            x1: from_center.x,
+            y1: from_center.y,
+            x2: to_center.x,
+            y2: to_center.y
+        });
+        preAdd(svg, line);
+    }
+
     function create(svg, shapeName, optsGiven) {
         const nid = uid(); 
         const opts = { ...node_default_opts, ...optsGiven, "data-nid": nid };
@@ -126,11 +143,11 @@ function NodeGraph() {
                     const line = line_lookup[lineNode];
                     line.dataset.dest_nid = nid;
                     lineNode = null;
-                    sendEvent(svg, "connect", { from: line.dataset.src_nid, to: nid });
+                    sendEvent(svg, "connect", { from: line.dataset.src_nid, to: nid, ref: line });
                 }
             });
             node_lookup[nid] = shape;
-            sendEvent(svg, "create", { nid });
+            sendEvent(svg, "create", { nid, ref: shape });
         } else if (shapeName === "line") {
             line_lookup[nid] = shape;
 
@@ -192,5 +209,5 @@ function NodeGraph() {
         addListeners(svg);
     }
 
-    return { nodeGraph };
+    return { nodeGraph, createConection };
 }
