@@ -1,10 +1,13 @@
-function PeerGraph(createConection) {
+function PeerGraph(createConection, removeConection) {
 
     // pid to peer object
     const peer_lookup = {};
 
-    // nid to pid
+    // nid to pid 
     const pid_lookup = {};
+
+    // pid to nid
+    const nid_lookup = {};
 
     // Line Lookup
     const line_lookup = {};
@@ -53,11 +56,11 @@ function PeerGraph(createConection) {
     }
 
     function saveConnection(from, to, conn) {
-        // TODO: Connection was just opened, save `to` to `heartbeat[from]`
         if (!(from in connection_lookup)) {
             connection_lookup[from] = {};
         }
         connection_lookup[from][to] = conn;
+        heartbeat[from][to] = Date.now();
     }
 
     // Events from NodeGraph
@@ -65,7 +68,7 @@ function PeerGraph(createConection) {
         console.log(`create: ${nid}`);
         const peer = new Peer();
         peer.on('open', function(id) {
-
+            nid_lookup[id] = nid;
             peer_lookup[nid] = {
                 ref: ref,
                 peer_id: id,
@@ -74,21 +77,111 @@ function PeerGraph(createConection) {
             heartbeat[id] = {};
             peer.on('connection', (conn) => {
                 saveConnection(id, conn.peer, conn);
+                newconn.on('close', function() {
+                    delete connection_lookup[id][conn.peer];
+                    removeConection(
+                        nid_lookup[id],
+                        nid_lookup[conn.peer]
+                    );
+                });
             });
 
             const msg = () => {
                 // TODO: If no heartbeat peers, do nothing.
+                if (numberKnownPeers(id) > 0) {
+                    // If host, establish a connection with all heartbeat peers.
+                    // TODO: Cull heartbeat peers that miss heartbeat check.
+                    // Send all peers updated heartbeat register (and game state).
+                    if (isHost(id)) {
+                        for (let other_pid in heartbeat[id]) {
+                            const conn = connection_lookup[id][other_pid];
+                            if (conn === undefined) {
+                                const newconn = peer.connect(other_pid);
+                                connection_lookup[id][other_pid] = newconn;
+                                createConection(
+                                    nid_lookup[id],
+                                    nid_lookup[other_pid]
+                                );
+                                newconn.on('open', () => {
+                                    saveConnection(id, other_pid, newconn);
+                                });
+                                newconn.on('data', function(data) {
+                                    if (data.type === "heartbeat") {
+                                        heartbeat[id][other_pid] = Date.now();
+                                    }
+                                });
+                                newconn.on('close', function() {
+                                    delete connection_lookup[id][other_pid];
+                                    removeConection(
+                                        nid_lookup[id],
+                                        nid_lookup[other_pid]
+                                    );
+                                });
+                            } else {
+                                if (conn.open) {
+                                    conn.send({
+                                        type: "heartbeat",
+                                        payload: heartbeat[id]
+                                    });
+                                }
+                            }
+                        }
 
-                // TODO: If host, establish a connection with all heartbeat peers.
-                // Cull heartbeat peers that miss heartbeat check.
-                // Send all peers updated heartbeat register (and game state).
-                
-                // TOOD: If not host, close all connections except for the host.
-                // Establish conn with host, and send heartbeat check.
+                    // If not host, close all connections except for the host.
+                    // Establish conn with host, and send heartbeat check.
+                    } else {
+                        const host_pid = getHost(id);
+                        for (let other_pid in heartbeat[id]) {
+                            const conn = connection_lookup[id][other_pid];
+                            if (host_pid === other_pid) {
+                                if (conn === undefined) {
+                                    const newconn = peer.connect(host_pid);
+                                    connection_lookup[id][host_pid] = newconn;
+                                    createConection(
+                                        nid_lookup[id],
+                                        nid_lookup[host_pid]
+                                    );
+                                    newconn.on('open', () => {
+                                        saveConnection(id, host_pid, newconn);
+                                    });
+                                    newconn.on('data', function(data) {
+                                        if (data.type === "heartbeat") {
+                                            const { payload } = data;
+                                            // TODO: Merge payload with your heartbeat info
+                                            delete payload[id];
+                                            for (let h_pid in heartbeat[id]) {
+                                                if (!(h_pid in payload)) {
+                                                    if (h_pid in connection_lookup[id]) {
+                                                        connection_lookup[id][h_pid].close();
+                                                    }
+                                                }
+                                            }
+                                            heartbeat[id] = payload;
+                                        }
+                                    });
+                                    newconn.on('close', function() {
+                                        delete connection_lookup[id][host_pid];
+                                        removeConection(
+                                            nid_lookup[id],
+                                            nid_lookup[host_pid]
+                                        );
+                                    });
+                                } else {
+                                    if (conn.open) {
+                                        conn.send({
+                                            type: "heartbeat"
+                                        });
+                                    }
+                                }
+                            } else {
+                                conn.close();
+                            }
+                        }
+                    }
+                }
             };
             msg();
             setInterval(msg, 1000);
-
         });
     }
 
@@ -122,6 +215,13 @@ function PeerGraph(createConection) {
         var conn = from_peer.connect(to_pid);
         conn.on('open', () => {
             saveConnection(from_pid, to_pid, conn);
+        });
+        conn.on('close', function() {
+            delete connection_lookup[from_pid][to_pid];
+            removeConection(
+                nid_lookup[from_pid],
+                nid_lookup[to_pid]
+            );
         });
         saveLine(from, to, ref);
     }

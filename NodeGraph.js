@@ -89,6 +89,17 @@ function NodeGraph() {
         preAdd(svg, line);
     }
 
+    function removeConnection(from_nid, to_nid) {
+        for (let line_nid in line_lookup) {
+            const line = line_lookup[line_nid];
+            const { src_nid, dest_nid } = line.dataset;
+            if (src_nid == from_nid && dest_nid == to_nid) {
+                delete line_lookup[line_nid];
+                line.remove();
+            }
+        }
+    }
+
     function create(svg, shapeName, optsGiven) {
         const nid = uid(); 
         const opts = { ...node_default_opts, ...optsGiven, "data-nid": nid };
@@ -209,5 +220,5 @@ function NodeGraph() {
         addListeners(svg);
     }
 
-    return { nodeGraph, createConection };
+    return { nodeGraph, createConection, removeConnection };
 }
