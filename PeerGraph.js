@@ -1,16 +1,12 @@
 function PeerGraph(createConection, removeConection) {
 
+    const DELTA  = 1000;
+
     // pid to peer object
-    const peer_lookup = {};
+    const pid_to_peer_lookup = {};
 
     // nid to pid 
-    const pid_lookup = {};
-
-    // pid to nid
-    const nid_lookup = {};
-
-    // Line Lookup
-    const line_lookup = {};
+    const nid_to_pid_lookup = {};
 
     // For each peer track all known peers and last time connected
     // {pid -> {pid: last_msg_time, ...}}
@@ -20,71 +16,59 @@ function PeerGraph(createConection, removeConection) {
     // {pid -> {pid: last_msg_time, ...}}
     const connection_lookup = {};
 
-    // Helpers
-    function saveLine(from, to, ref) {
-        const fid = parseInt(from);
-        const tid = parseInt(to);
-        if (fid < tid) {
-            if (!(fid in line_lookup)) {
-                line_lookup[fid] = {};
-            }
-            line_lookup[fid][tid] = ref;
-
-        } else { // tid < fid
-            if (!(tid in line_lookup)) {
-                line_lookup[tid] = {};
-            }
-            line_lookup[tid][fid] = ref;
-        }
-    }
-
-    function getLine(from, to) {
-        const fid = parseInt(from);
-        const tid = parseInt(to);
-        if (fid < tid) {
-            if (!(fid in line_lookup)) {
-                return null;
-            }
-            return line_lookup[fid][tid];
-
-        } else { // tid < fid
-            if (!(tid in line_lookup)) {
-                return null;
-            }
-            return line_lookup[tid][fid];
-        }
-    }
-
     function saveConnection(from, to, conn) {
         if (!(from in connection_lookup)) {
             connection_lookup[from] = {};
         }
         connection_lookup[from][to] = conn;
-        heartbeat[from][to] = Date.now();
     }
 
     // Events from NodeGraph
     function create(nid, ref) {
+        
         console.log(`create: ${nid}`);
         const peer = new Peer();
+
         peer.on('open', function(id) {
-            nid_lookup[id] = nid;
-            peer_lookup[nid] = {
+            heartbeat[id] = {};
+            nid_to_pid_lookup[id] = nid;
+            pid_to_peer_lookup[id] = {
                 ref: ref,
-                peer_id: id,
+                pid: id,
+                nid,
                 peer
             };
-            heartbeat[id] = {};
+            
             peer.on('connection', (conn) => {
                 saveConnection(id, conn.peer, conn);
-                newconn.on('close', function() {
+                heartbeat[id][conn.peer] = Date.now();
+                createConection(
+                    pid_to_peer_lookup[id].nid,
+                    pid_to_peer_lookup[conn.peer].nid
+                );
+                conn.on('close', function() {
                     delete connection_lookup[id][conn.peer];
+                    delete heartbeat[id][conn.peer];
                     removeConection(
-                        nid_lookup[id],
-                        nid_lookup[conn.peer]
+                        pid_to_peer_lookup[id].nid,
+                        pid_to_peer_lookup[conn.peer].nid
                     );
                 });
             });
+
+            function filterPeers(heartbeat_peers, DELTA) {
+                const remove = [];
+                for (let pid in heartbeat_peers) {
+                    const time = heartbeat_peers[pid];
+                    if (DELTA <= time) {
+                        remove.push(pid);
+                    }
+                }
+                for (let pid of remove) {
+                    delete heartbeat_peers[pid];
+                }
+                return heartbeat_peers;
+            }
 
             const msg = () => {
                 // TODO: If no heartbeat peers, do nothing.
@@ -93,25 +77,31 @@ function PeerGraph(createConection, removeConection) {
                     // TODO: Cull heartbeat peers that miss heartbeat check.
                     // Send all peers updated heartbeat register (and game state).
                     if (isHost(id)) {
+                        heartbeat[id] = filterPeers(heartbeat[id], DELTA);
                         for (let other_pid in heartbeat[id]) {
                             const conn = connection_lookup[id][other_pid];
                             if (conn === undefined) {
                                 const newconn = peer.connect(other_pid);
-                                connection_lookup[id][other_pid] = newconn;
+                                saveConnection(id, other_pid, newconn);
                                 createConection(
                                     nid_lookup[id],
                                     nid_lookup[other_pid]
                                 );
                                 newconn.on('open', () => {
-                                    saveConnection(id, other_pid, newconn);
+                                    heartbeat[id][other_pid] = Date.now();
                                 });
                                 newconn.on('data', function(data) {
-                                    if (data.type === "heartbeat") {
-                                        heartbeat[id][other_pid] = Date.now();
+                                    heartbeat[id][other_pid] = Date.now();
+                                    if (data.type === "gamestate") {
+                                        // update game state
+                                        for (let other_pid in heartbeat) {
+                                            
+                                        }                            
                                     }
                                 });
                                 newconn.on('close', function() {
                                     delete connection_lookup[id][other_pid];
+                                    delete heartbeat[id][other_pid];
                                     removeConection(
                                         nid_lookup[id],
                                         nid_lookup[other_pid]
@@ -185,10 +175,6 @@ function PeerGraph(createConection, removeConection) {
         });
     }
 
-    function remove(nid) {
-        console.log(`remove: ${nid}`);
-    }
-
     function numberKnownPeers(pid) {
         return Object.keys(heartbeat[pid]).length;
     }
@@ -215,15 +201,20 @@ function PeerGraph(createConection, removeConection) {
         var conn = from_peer.connect(to_pid);
         conn.on('open', () => {
             saveConnection(from_pid, to_pid, conn);
+            heartbeat[from_pid][to_pid] = Date.now();
         });
         conn.on('close', function() {
             delete connection_lookup[from_pid][to_pid];
+            delete heartbeat[from_pid][to_pid];
             removeConection(
                 nid_lookup[from_pid],
                 nid_lookup[to_pid]
             );
         });
-        saveLine(from, to, ref);
+    }
+
+    function remove(nid) {
+        console.log(`remove: ${nid}`);
     }
 
     return {
