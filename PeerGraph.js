@@ -1,6 +1,7 @@
 function PeerGraph(createConection, removeConection) {
 
-    const DELTA  = 1000;
+    const POLL = 1000;
+    const CUT  = 3000;
 
     // pid to peer object
     const pid_to_peer_lookup = {};
@@ -16,6 +17,9 @@ function PeerGraph(createConection, removeConection) {
     // {pid -> {pid: last_msg_time, ...}}
     const connection_lookup = {};
 
+    //
+    // Helper
+    //
     function saveConnection(from, to, conn) {
         if (!(from in connection_lookup)) {
             connection_lookup[from] = {};
@@ -23,9 +27,24 @@ function PeerGraph(createConection, removeConection) {
         connection_lookup[from][to] = conn;
     }
 
-    function onData(from_pid, to_pid, data) {
-        heartbeat[from_pid][to_pid] = Date.now();
+    function onData(from_pid, to_pid, conn, data) {
+        if (isHost(from_pid)) {
+            heartbeat[from_pid][to_pid] = Date.now();
+            if (data.type === "gamestate_update") {
+                // Update global gamestate and send to all peers
 
+            }
+        } else {
+            if (data.type === "heartbeat") {
+                conn.send({
+                    type: "heartbeat"
+                });
+
+            } else if (data.type === "gamestate") {
+                // Sync local state with gamestate
+
+            }
+        }
     }
 
     function peer_connect(from_pid, to_pid, conn) {
@@ -38,7 +57,7 @@ function PeerGraph(createConection, removeConection) {
             );
         });
         conn.on('data', (data) => {
-            onData(from_pid, to_pid, data);
+            onData(from_pid, to_pid, conn, data);
         });
         conn.on('close', () => {
             delete connection_lookup[from_pid][to_pid];
@@ -85,19 +104,24 @@ function PeerGraph(createConection, removeConection) {
             });
 
             const msg = () => {
-                // TODO: If no heartbeat peers, do nothing.
+                // If no heartbeat peers, do nothing.
                 if (numberKnownPeers(id) > 0) {
-                    // If host, establish a connection with all heartbeat peers.
-                    // TODO: Cull heartbeat peers that miss heartbeat check.
-                    // Send all peers updated heartbeat register (and game state).
+
+                    // If host.
                     if (isHost(id)) {
-                        heartbeat[id] = filterPeers(heartbeat[id], DELTA);
+
+                        // Cull heartbeat peers that miss heartbeat check.
+                        heartbeat[id] = filterPeers(heartbeat[id], CUT);
+
+                        // Establish a connection with all heartbeat peers.
                         for (let other_pid in heartbeat[id]) {
                             const conn = connection_lookup[id][other_pid];
                             if (conn === undefined) {
                                 const newconn = peer.connect(other_pid);
                                 saveConnection(id, other_pid, newconn);
                                 peer_connect(id, other_pid, newconn);
+
+                            // Send all peers updated heartbeat register.
                             } else {
                                 if (conn.open) {
                                     conn.send({
@@ -108,24 +132,21 @@ function PeerGraph(createConection, removeConection) {
                             }
                         }
 
-                    // If not host, close all connections except for the host.
-                    // Establish conn with host, and send heartbeat check.
+                    // If not host.
                     } else {
                         const host_pid = getHost(id);
                         for (let other_pid in heartbeat[id]) {
                             const conn = connection_lookup[id][other_pid];
+
+                            // Establish conn with host, and send heartbeat check.
                             if (host_pid === other_pid) {
                                 if (conn == undefined) {
                                     const newconn = peer.connect(host_pid);
                                     connection_lookup[id][host_pid] = newconn;
                                     peer_connect(id, host_pid, newconn);
-                                } else {
-                                    if (conn.open) {
-                                        conn.send({
-                                            type: "heartbeat"
-                                        });
-                                    }
                                 }
+
+                            // Close all connections except for the host.
                             } else {
                                 conn.close();
                             }
@@ -134,7 +155,7 @@ function PeerGraph(createConection, removeConection) {
                 }
             };
             msg();
-            setInterval(msg, 1000);
+            setInterval(msg, POLL);
         });
     }
 
