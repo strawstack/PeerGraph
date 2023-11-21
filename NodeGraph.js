@@ -72,7 +72,8 @@ function NodeGraph() {
         svg.dispatchEvent(evt);
     }
 
-    function createConection(from_nid, to_nid) {
+    function createConnection(from_nid, to_nid) {
+        console.log(`createConnection: from_nid: ${from_nid}, to_nid: ${to_nid}`);
         const from_node = node_lookup[from_nid];
         const to_node = node_lookup[to_nid];
         const from_center = getCenter(from_node);
@@ -220,5 +221,5 @@ function NodeGraph() {
         addListeners(svg);
     }
 
-    return { nodeGraph, createConection, removeConnection };
+    return { nodeGraph, createConnection, removeConnection };
 }
